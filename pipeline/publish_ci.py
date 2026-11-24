@@ -75,9 +75,13 @@ def main():
             try:
                 product = mp.cut_out(d)
                 bgs = mp.load_backgrounds(kind)
-                bg = mp.prepare_bg(random.Random(art).choice(bgs)) if bgs else mp.fallback_backgrounds()[0]
+                if bgs:
+                    bgp = mp.pick_bg(product, bgs, art)
+                    bg, tag = mp.prepare_bg(bgp), os.path.splitext(os.path.basename(bgp))[0]
+                else:
+                    bg, tag = mp.fallback_backgrounds()[0], 'bg'
                 img = mp.compose(product, bg, kind, f'{art}-1', cropped)
-                fn = f'{safe(art)}.jpg'
+                fn = f'{safe(art)}_{kind[0]}{tag}.jpg'
                 img.save(os.path.join(WORK, 'img', fn), quality=86, optimize=True)
                 final = [PAGES + 'img/' + fn] + [u for j, u in enumerate(urls) if j != n][:MAX_PHOTOS - 1]
                 status = 'новый фон' + (' (модель по пояс)' if cropped else '')
