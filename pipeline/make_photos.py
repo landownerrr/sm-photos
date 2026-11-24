@@ -59,6 +59,30 @@ def match_tone(p, bg, strength=0.10):
     out = rgb.convert('RGBA'); out.putalpha(a)
     return out
 
+_BG_CACHE = {}
+
+def bg_luma(path):
+    # средняя яркость фона в зоне, где стоит товар
+    from PIL import ImageStat
+    if path not in _BG_CACHE:
+        im = prepare_bg(path).convert('L')
+        box = (int(SIZE * 0.2), int(SIZE * 0.15), int(SIZE * 0.8), int(SIZE * 0.92))
+        _BG_CACHE[path] = ImageStat.Stat(im.crop(box)).mean[0]
+    return _BG_CACHE[path]
+
+def product_luma(product):
+    from PIL import ImageStat
+    return ImageStat.Stat(product.convert('L'), mask=product.getchannel('A')).mean[0]
+
+def pick_bg(product, bgs, seed, min_diff=55):
+    # светлый товар на тёмный фон, тёмный на светлый: берём фоны с заметной разницей яркости
+    pl = product_luma(product)
+    scored = [(abs(bg_luma(b) - pl), b) for b in bgs]
+    good = [b for d, b in scored if d >= min_diff]
+    if not good:
+        good = [b for d, b in sorted(scored, reverse=True)[:max(1, len(scored) // 3)]]
+    return random.Random(seed).choice(sorted(good))
+
 def compose(product, bg, kind, seed, cropped=False):
     rnd = random.Random(seed)
     canvas = bg.copy()
