@@ -5,7 +5,14 @@ from PIL import Image, ImageFilter, ImageDraw, ImageOps
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUT = os.path.join(HERE, 'out')
-SIZE = 1200            # итоговое фото 1200x1200
+W, H = 1200, 1200       # квадрат 1:1, как лента Авито в телефоне
+SIZE = H
+VERSION = 'v3'
+SAFE = 0.13             # поля, которые может срезать XL-карточка 4:3: товар и плашка внутри
+BADGE = ('Новый, оригинал', 'Чек и гарантия магазина')
+FUN_PCT = 15            # доля товаров с весёлым фоном (тест кликабельности)
+FUN_BLUR = 4            # лёгкое размытие весёлого фона: зверь узнаётся, товар отделяется
+FUN_SCALE = 0.85        # на весёлом фоне товар чуть меньше, чтобы персонажи по краям были видны
 VARIANTS = 3           # сколько вариантов фона делать на каждый товар
 
 def load_backgrounds(kind):
@@ -15,23 +22,28 @@ def load_backgrounds(kind):
             files += glob.glob(os.path.join(folder, '*.' + ext))
     return sorted(set(files))
 
+def is_fun(article):
+    # постоянный жребий по артикулу: один и тот же товар всегда в одной группе
+    import hashlib
+    return int(hashlib.md5(article.encode()).hexdigest(), 16) % 100 < FUN_PCT
+
 def fallback_backgrounds():
     # если своих фонов нет, делаем три спокойных фона с лёгкой фактурой
     res = []
     for top, bottom in (((214, 208, 200), (178, 170, 160)), ((200, 203, 206), (150, 154, 158)), ((222, 205, 182), (186, 160, 128))):
-        g = Image.new('RGB', (SIZE, SIZE))
+        g = Image.new('RGB', (W, H))
         d = ImageDraw.Draw(g)
-        for y in range(SIZE):
-            t = y / SIZE
-            d.line([(0, y), (SIZE, y)], fill=tuple(int(top[i] + (bottom[i] - top[i]) * t) for i in range(3)))
-        noise = Image.effect_noise((SIZE, SIZE), 18).convert('RGB')
+        for y in range(H):
+            t = y / H
+            d.line([(0, y), (W, y)], fill=tuple(int(top[i] + (bottom[i] - top[i]) * t) for i in range(3)))
+        noise = Image.effect_noise((W, H), 18).convert('RGB')
         res.append(Image.blend(g, noise, 0.06))
     return res
 
 def prepare_bg(src):
     im = src if isinstance(src, Image.Image) else Image.open(src)
     im = ImageOps.exif_transpose(im).convert('RGB')
-    return ImageOps.fit(im, (SIZE, SIZE), Image.LANCZOS)
+    return ImageOps.fit(im, (W, H), Image.LANCZOS)
 
 MODEL = 'birefnet-general-lite'   # лицензия MIT, можно для коммерции
 _session = None
@@ -59,65 +71,147 @@ def match_tone(p, bg, strength=0.10):
     out = rgb.convert('RGBA'); out.putalpha(a)
     return out
 
-_BG_CACHE = {}
-
-def bg_luma(path):
-    # средняя яркость фона в зоне, где стоит товар
-    from PIL import ImageStat
-    if path not in _BG_CACHE:
-        im = prepare_bg(path).convert('L')
-        box = (int(SIZE * 0.2), int(SIZE * 0.15), int(SIZE * 0.8), int(SIZE * 0.92))
-        _BG_CACHE[path] = ImageStat.Stat(im.crop(box)).mean[0]
-    return _BG_CACHE[path]
-
-def product_luma(product):
-    from PIL import ImageStat
-    return ImageStat.Stat(product.convert('L'), mask=product.getchannel('A')).mean[0]
-
-def pick_bg(product, bgs, seed, min_diff=55):
-    # светлый товар на тёмный фон, тёмный на светлый: берём фоны с заметной разницей яркости
-    pl = product_luma(product)
-    scored = [(abs(bg_luma(b) - pl), b) for b in bgs]
-    good = [b for d, b in scored if d >= min_diff]
-    if not good:
-        good = [b for d, b in sorted(scored, reverse=True)[:max(1, len(scored) // 3)]]
-    return random.Random(seed).choice(sorted(good))
-
-def compose(product, bg, kind, seed, cropped=False):
+def layout(product, kind, seed, cropped=False, shrink=1.0):
+    # где и в каком размере стоит товар; от фона не зависит. Всё главное внутри центральной зоны
     rnd = random.Random(seed)
-    canvas = bg.copy()
-    # размер товара на фото: куртки крупнее, обувь чуть меньше
+    lo, hi = SAFE * H, (1 - SAFE) * H
     standing = kind == 'jacket' and not cropped and product.height / product.width > 1.8
     if standing:
-        # модель в полный рост: ставим ногами на пол
-        scale = 0.84 * SIZE / product.height * rnd.uniform(0.97, 1.02)
+        scale = 0.72 * H / product.height
     elif cropped:
-        # человек обрезан снизу: ставим по нижнему краю кадра, как обычный портрет
-        scale = min(0.90 * SIZE / product.height, 0.96 * SIZE / product.width) * rnd.uniform(0.97, 1.0)
-    else:
-        target = (0.80 if kind == 'jacket' else 0.68) * SIZE * rnd.uniform(0.95, 1.03)
-        scale = target / max(product.size)
-    p = product.resize((int(product.width * scale), int(product.height * scale)), Image.LANCZOS)
-    p = match_tone(p, bg)
-    x = (SIZE - p.width) // 2 + (0 if cropped else rnd.randint(-25, 25))
-    if standing:
-        y = int(SIZE * 0.95) - p.height
-    elif cropped:
-        y = SIZE - p.height
+        scale = min(0.84 * H / product.height, 0.74 * W / product.width)
     elif kind == 'shoes':
-        # подошва стоит на полу: низ обуви на 88% высоты кадра
-        y = int(SIZE * 0.88) - p.height + rnd.randint(-10, 10)
+        scale = min(0.72 * W / product.width, 0.58 * H / product.height)
     else:
-        y = (SIZE - p.height) // 2 + 15 + rnd.randint(-15, 15)
+        scale = min(0.70 * H / product.height, 0.72 * W / product.width)
+    scale *= shrink * rnd.uniform(0.98, 1.02)
+    p = product.resize((max(1, int(product.width * scale)), max(1, int(product.height * scale))), Image.LANCZOS)
+    x = (W - p.width) // 2
+    if cropped:
+        y = H - p.height
+    elif standing:
+        y = int(hi) - p.height
+    elif kind == 'shoes':
+        y = int(H * 0.80) - p.height
+    else:
+        y = int((lo + hi) / 2 - p.height / 2 + 0.02 * H)
+    return p, x, y, standing
+
+def _font(bold, size):
+    from PIL import ImageFont
+    here = os.path.dirname(os.path.abspath(__file__))
+    names = ['DejaVuSans-Bold.ttf' if bold else 'DejaVuSans.ttf']
+    for d in (os.path.join(here, 'fonts'), '/usr/share/fonts/truetype/dejavu', '/Library/Fonts', '/System/Library/Fonts/Supplemental'):
+        for n in names + (['Arial Bold.ttf'] if bold else ['Arial.ttf']):
+            if os.path.exists(os.path.join(d, n)):
+                return ImageFont.truetype(os.path.join(d, n), size)
+    return ImageFont.load_default()
+
+def badge_size():
+    from PIL import ImageDraw
+    f1, f2 = _font(True, 44), _font(False, 30)
+    d = ImageDraw.Draw(Image.new('L', (1, 1)))
+    w = max(d.textlength(BADGE[0], font=f1), d.textlength(BADGE[1], font=f2)) + 2 * 24 + 14
+    return int(w), 44 + 30 + 14 + 2 * 20
+
+def badge_spots(p, x, y):
+    # углы центральной зоны и насколько плашка там задевает товар
+    bw, bh = badge_size()
+    m = int(SAFE * W) + 4
+    spots = [(m, m), (W - m - bw, m), (m, H - m - bh), (W - m - bw, H - m - bh)]
+    a = Image.new('L', (W, H), 0); a.paste(p.getchannel('A'), (x, y))
+    res = []
+    for sx, sy in spots:
+        box = a.crop((sx, sy, sx + bw, sy + bh))
+        res.append((sum(box.point(lambda v: 1 if v > 40 else 0).getdata()) / (bw * bh), sx, sy))
+    return res
+
+def place(product, kind, seed, cropped=False, base=1.0):
+    # уменьшаем товар, пока плашке не найдётся угол без перекрытия
+    for shrink in (1.0, 0.94, 0.88, 0.82):
+        p, x, y, st = layout(product, kind, seed, cropped, shrink * base)
+        spots = badge_spots(p, x, y)
+        free = [(sx, sy) for c, sx, sy in spots if c <= 0.02]
+        if free:
+            break
+    if not free:
+        c, sx, sy = min(spots); free = [(sx, sy)]
+    return p, x, y, st, free
+
+def busy(bg, sx, sy):
+    # насколько пёстрый фон в углу (там может быть зверь или огни)
+    from PIL import ImageStat
+    bw, bh = badge_size()
+    g = bg.convert('L').crop((sx, sy, sx + bw, sy + bh)).filter(ImageFilter.FIND_EDGES)
+    return ImageStat.Stat(g).mean[0]
+
+def draw_badge(canvas, bx, by):
+    from PIL import ImageDraw
+    f1, f2 = _font(True, 44), _font(False, 30)
+    bw, bh = badge_size()
+    ov = Image.new('RGBA', canvas.size, (0, 0, 0, 0))
+    sh = Image.new('RGBA', canvas.size, (0, 0, 0, 0))
+    ImageDraw.Draw(sh).rounded_rectangle([bx + 3, by + 6, bx + bw + 3, by + bh + 6], radius=20, fill=(0, 0, 0, 70))
+    sh = sh.filter(ImageFilter.GaussianBlur(8))
+    d = ImageDraw.Draw(ov)
+    d.rounded_rectangle([bx, by, bx + bw, by + bh], radius=20, fill=(255, 255, 255, 232))
+    d.rectangle([bx, by + 18, bx + 8, by + bh - 18], fill=(0, 150, 70, 255))
+    d.text((bx + 24 + 14, by + 18), BADGE[0], font=f1, fill=(20, 24, 30, 255))
+    d.text((bx + 24 + 14, by + 18 + 44 + 12), BADGE[1], font=f2, fill=(55, 60, 70, 255))
+    out = Image.alpha_composite(canvas.convert('RGBA'), sh)
+    return Image.alpha_composite(out, ov)
+
+_BG_CACHE = {}
+
+def bg_gray(path):
+    if path not in _BG_CACHE:
+        _BG_CACHE[path] = prepare_bg(path).convert('L')
+    return _BG_CACHE[path]
+
+def contrast_on(bg_l, p, x, y):
+    # яркость фона в полосе вокруг силуэта товара, отдельно сверху и снизу
+    from PIL import ImageStat
+    a = p.getchannel('A').point(lambda v: 255 if v > 40 else 0)
+    pad = 40
+    big = Image.new('L', (p.width + 2 * pad, p.height + 2 * pad), 0)
+    big.paste(a, (pad, pad))
+    ring = Image.eval(big.filter(ImageFilter.MaxFilter(31)), lambda v: v)
+    ring = Image.composite(Image.new('L', big.size, 0), ring, big)  # кольцо = расширенный силуэт минус сам товар
+    region = bg_l.crop((x - pad, y - pad, x - pad + big.width, y - pad + big.height))
+    inside = Image.new('L', bg_l.size, 255).crop((x - pad, y - pad, x - pad + big.width, y - pad + big.height))
+    ring = Image.composite(ring, Image.new('L', big.size, 0), inside)  # за краем кадра не считаем
+    pl = ImageStat.Stat(p.convert('L'), mask=a).mean[0]
+    half = big.height // 2
+    res = []
+    for box in ((0, 0, big.width, half), (0, half, big.width, big.height)):
+        m = ring.crop(box)
+        if m.getbbox():
+            res.append(abs(ImageStat.Stat(region.crop(box), mask=m).mean[0] - pl))
+    return min(res) if res else 0
+
+def pick_bg(product, bgs, seed, kind='shoes', cropped=False, min_diff=50, base=1.0):
+    # светлый товар на тёмный фон, тёмный на светлый: проверяем фон прямо вокруг силуэта
+    p, x, y, _, _ = place(product, kind, seed, cropped, base)
+    scored = sorted(((contrast_on(bg_gray(b), p, x, y), b) for b in bgs), reverse=True)
+    good = sorted(b for d, b in scored if d >= min_diff)
+    if not good:
+        good = [b for d, b in scored[:max(1, len(scored) // 3)]]
+    return random.Random(seed).choice(good)
+
+def compose(product, bg, kind, seed, cropped=False, fun=False):
+    if fun and FUN_BLUR:
+        bg = bg.filter(ImageFilter.GaussianBlur(FUN_BLUR))
+    canvas = bg.copy()
+    p, x, y, standing, free = place(product, kind, seed, cropped, FUN_SCALE if fun else 1.0)
+    bx, by = min(free, key=lambda s_: busy(bg, *s_))
+    p = match_tone(p, bg)
     shadow = Image.new('RGBA', canvas.size, (0, 0, 0, 0))
     if (kind == 'shoes' and not cropped) or standing:
-        # контактная тень под подошвой
         d = ImageDraw.Draw(shadow)
         w0 = 0.04 if kind == 'shoes' else 0.15
-        d.ellipse([x + p.width * w0, y + p.height - 22, x + p.width * (1 - w0), y + p.height + 18], fill=(0, 0, 0, 120))
-        shadow = shadow.filter(ImageFilter.GaussianBlur(14))
+        d.ellipse([x + p.width * w0, y + p.height - 24, x + p.width * (1 - w0), y + p.height + 20], fill=(0, 0, 0, 125))
+        shadow = shadow.filter(ImageFilter.GaussianBlur(16))
     else:
-        # мягкая тень на стене за курткой
         alpha = p.getchannel('A')
         sh = Image.new('RGBA', p.size, (0, 0, 0, 110))
         sh.putalpha(alpha.point(lambda a: int(a * 0.45)))
@@ -125,6 +219,8 @@ def compose(product, bg, kind, seed, cropped=False):
         shadow = shadow.filter(ImageFilter.GaussianBlur(22))
     canvas = Image.alpha_composite(canvas.convert('RGBA'), shadow)
     canvas.paste(p, (x, y), p)
+    if BADGE:
+        canvas = draw_badge(canvas, bx, by)
     return canvas.convert('RGB')
 
 def photo_kind(data):
@@ -145,7 +241,52 @@ def photo_kind(data):
         return 'pack'
     if top >= 0.97 and min(left, right) >= 0.85 and bottom < 0.97:
         return 'crop'
+    # ровный светлый студийный фон (серый, бежевый): края однотонные
+    def plain(e):
+        e = e.reshape(-1, 3)
+        return e.mean() >= 165 and e.std() <= 15
+    if plain(a[:, :k]) and plain(a[:, -k:]):
+        return 'gray'
     return None
+
+def clean_cutout(data, product_full):
+    # фон вокруг товара однотонный, без надписей и инфографики
+    import numpy as np
+    im = np.asarray(Image.open(io.BytesIO(data)).convert('L')).astype(int)
+    al = np.asarray(product_full.getchannel('A'))
+    if al.shape != im.shape:
+        return False
+    bgp = im[al < 10]
+    if bgp.size < 1000:
+        return False
+    med = np.median(bgp)
+    if (np.abs(bgp - med) > 28).mean() >= 0.015:
+        return False
+    # вырезалось одним куском: отдельные значки и надписи рядом с товаром не допускаем
+    try:
+        from scipy import ndimage
+        lab, n = ndimage.label(al > 60)
+        if n > 1:
+            sizes = np.bincount(lab.ravel())[1:]
+            if np.sort(sizes)[:-1].sum() > 0.003 * al.size:
+                return False
+    except ImportError:
+        pass
+    return True
+
+def touches_bottom(product_full):
+    import numpy as np
+    al = np.asarray(product_full.getchannel('A'))
+    return (al[-4:] > 40).mean() > 0.05
+
+def cut_out_full(img_bytes):
+    # вырезка без обрезки по краям, чтобы сверить с исходником
+    global _session
+    from rembg import remove, new_session
+    if _session is None:
+        _session = new_session(MODEL)
+    out = remove(img_bytes, session=_session)
+    return Image.open(io.BytesIO(out)).convert('RGBA')
 
 def main():
     import requests, shutil
