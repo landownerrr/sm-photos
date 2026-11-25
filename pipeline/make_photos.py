@@ -7,10 +7,11 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 OUT = os.path.join(HERE, 'out')
 W, H = 1200, 1200       # квадрат 1:1, как лента Авито в телефоне
 SIZE = H
-VERSION = 'v5'
+VERSION = 'v6'
 SAFE = 0.13             # поля, которые может срезать XL-карточка 4:3: товар и плашка внутри
 BADGE = ('Новый, оригинал', 'Чек и гарантия магазина')
-FUN_PCT = 15            # доля товаров с весёлым фоном (тест кликабельности)
+FUN_PCT = 0             # весёлые фоны выключены (владелец решил: несерьёзно)
+CITY_PCT = 50           # доля курток с городским фоном в стиле Петербурга
 FUN_BLUR = 4            # лёгкое размытие весёлого фона: зверь узнаётся, товар отделяется
 FUN_SCALE = 0.85        # на весёлом фоне товар чуть меньше, чтобы персонажи по краям были видны
 VARIANTS = 3           # сколько вариантов фона делать на каждый товар
@@ -26,6 +27,10 @@ def is_fun(article):
     # постоянный жребий по артикулу: один и тот же товар всегда в одной группе
     import hashlib
     return int(hashlib.md5(article.encode()).hexdigest(), 16) % 100 < FUN_PCT
+
+def is_city(article):
+    import hashlib
+    return int(hashlib.md5(('city-' + article).encode()).hexdigest(), 16) % 100 < CITY_PCT
 
 def fallback_backgrounds():
     # если своих фонов нет, делаем три спокойных фона с лёгкой фактурой
