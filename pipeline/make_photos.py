@@ -7,7 +7,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 OUT = os.path.join(HERE, 'out')
 W, H = 1200, 1200       # квадрат 1:1, как лента Авито в телефоне
 SIZE = H
-VERSION = 'v6'
+VERSION = 'v7'
 SAFE = 0.13             # поля, которые может срезать XL-карточка 4:3: товар и плашка внутри
 BADGE = ('Новый, оригинал', 'Чек и гарантия магазина')
 FUN_PCT = 0             # весёлые фоны выключены (владелец решил: несерьёзно)
@@ -105,17 +105,19 @@ def layout(product, kind, seed, cropped=False, shrink=1.0):
     if kind == 'shoes':
         scale = min(0.86 * W / pw, 0.70 * H / ph)
     elif cropped:
-        # модель: по ширине почти во весь кадр, голова у верхнего края, низ уходит за кадр
-        scale = min(1.04 * H / ph, 0.95 * W / pw)
+        # модель: куртка во всю ширину кадра, голова у верхнего края, низ уходит за кадр.
+        # Узкую фигуру увеличиваем и по высоте, плечи тогда чуть срезаются краями (не больше 25%)
+        scale = max(W / pw, min(0.98 * H / ph, 1.25 * W / pw))
     else:
-        scale = min(0.92 * H / ph, 0.90 * W / pw)
+        # куртка без модели: во всю ширину или во всю высоту кадра, что раньше упрётся
+        scale = min(0.98 * H / ph, 0.98 * W / pw)
     scale *= shrink * rnd.uniform(0.99, 1.01)
     p = product.resize((max(1, int(pw * scale)), max(1, int(ph * scale))), Image.LANCZOS)
     x = (W - p.width) // 2
     if kind == 'shoes':
         y = int(H * 0.86) - p.height
     elif cropped:
-        y = int(0.03 * H) if p.height >= 0.97 * H else H - p.height
+        y = int(0.02 * H) if p.height >= 0.98 * H else H - p.height
     else:
         y = (H - p.height) // 2
     return p, x, y, False
@@ -150,7 +152,12 @@ def badge_spots(p, x, y):
     return res
 
 def place(product, kind, seed, cropped=False, base=1.0):
-    # плашка не должна закрывать товар и лицо: модель опускаем ниже плашки, остальное чуть уменьшаем
+    if kind == 'jacket':
+        # куртка на весь кадр, плашка внизу по центру поверх товара (так выше CTR, решение владельца)
+        p, x, y, st = layout(product, kind, seed, cropped, base)
+        bw, bh = badge_size()
+        return p, x, y, st, [((W - bw) // 2, H - bh - int(0.045 * H))]
+    # обувь: плашка в верхнем углу, не должна закрывать товар
     _, bh = badge_size()
     for shrink in (1.0, 0.93, 0.86):
         p, x, y, st = layout(product, kind, seed, cropped, base * shrink)
