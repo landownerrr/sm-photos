@@ -33,7 +33,7 @@ def main():
     a = ap.parse_args()
     done = set()
     prev = os.path.join(ROOT, 'photo_urls.csv')
-    if os.path.exists(prev):
+    if os.path.exists(prev) and os.environ.get('REDO') != 'true':
         with open(prev, encoding='utf-8') as f:
             for r in csv.DictReader(f):
                 if r['status'] != 'ошибка сети':
@@ -48,7 +48,7 @@ def main():
         art, kind = r['article'], r['type']
         urls = r['photo_urls'].split()
         print(f'[{i}/{len(mine)}] {art}', flush=True)
-        pick, crop, got = None, None, 0
+        pick, crop, grays, got = None, None, [], 0
         for n, u in enumerate(urls[:6]):
             d = fetch(u)
             if d is None:
@@ -59,7 +59,21 @@ def main():
                 pick = (n, d, False); break
             if k == 'crop' and crop is None:
                 crop = (n, d, True)
+            if k == 'gray' and len(grays) < 2:
+                grays.append((n, d))
         pick = pick or crop
+        pre = None
+        if not pick:
+            # студийное фото на светлом однотонном фоне: вырезаем, если вокруг нет надписей
+            for n, d in grays:
+                try:
+                    full = mp.cut_out_full(d)
+                except Exception as e:
+                    print('   ошибка вырезания:', e); continue
+                if mp.clean_cutout(d, full):
+                    box = full.getchannel('A').point(lambda v: 255 if v > 20 else 0).getbbox()
+                    pick, pre = (n, d, mp.touches_bottom(full)), (full.crop(box) if box else full)
+                    break
         final, status = urls[:MAX_PHOTOS], 'оригинал'
         if got == 0:
             status = 'ошибка сети'
@@ -73,18 +87,19 @@ def main():
         if pick:
             n, d, cropped = pick
             try:
-                product = mp.cut_out(d)
-                bgs = mp.load_backgrounds(kind)
+                product = pre if pre is not None else mp.cut_out(d)
+                fun = mp.is_fun(art) and mp.load_backgrounds(kind + '_fun')
+                bgs = mp.load_backgrounds(kind + '_fun') if fun else mp.load_backgrounds(kind)
                 if bgs:
-                    bgp = mp.pick_bg(product, bgs, art)
+                    bgp = mp.pick_bg(product, bgs, f'{art}-1', kind, cropped, base=mp.FUN_SCALE if fun else 1.0)
                     bg, tag = mp.prepare_bg(bgp), os.path.splitext(os.path.basename(bgp))[0]
                 else:
                     bg, tag = mp.fallback_backgrounds()[0], 'bg'
-                img = mp.compose(product, bg, kind, f'{art}-1', cropped)
-                fn = f'{safe(art)}_{kind[0]}{tag}.jpg'
+                img = mp.compose(product, bg, kind, f'{art}-1', cropped, bool(fun))
+                fn = f'{safe(art)}_{kind[0]}{"f" if fun else ""}{tag}_{mp.VERSION}.jpg'
                 img.save(os.path.join(WORK, 'img', fn), quality=86, optimize=True)
                 final = [PAGES + 'img/' + fn] + [u for j, u in enumerate(urls) if j != n][:MAX_PHOTOS - 1]
-                status = 'новый фон' + (' (модель по пояс)' if cropped else '')
+                status = 'новый фон' + (' (модель по пояс)' if cropped else '') + (', весёлый' if fun else '')
             except Exception as e:
                 print('   ошибка обработки:', e)
         print('  ', status)
