@@ -7,7 +7,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 OUT = os.path.join(HERE, 'out')
 W, H = 1200, 1200       # квадрат 1:1, как лента Авито в телефоне
 SIZE = H
-VERSION = 'v4'
+VERSION = 'v5'
 SAFE = 0.13             # поля, которые может срезать XL-карточка 4:3: товар и плашка внутри
 BADGE = ('Новый, оригинал', 'Чек и гарантия магазина')
 FUN_PCT = 15            # доля товаров с весёлым фоном (тест кликабельности)
@@ -83,36 +83,37 @@ def focus_product(product, kind, cropped=False):
         top = top.crop((box[0], box[1], box[2], h))
     return top, True
 
-def product_share(p):
-    # какую долю кадра занимает товар
-    a = p.getchannel('A').point(lambda v: 1 if v > 40 else 0)
-    return sum(a.getdata()) / (W * H)
+def big_enough(p, kind):
+    # товар крупный: обувь шириной от 50% кадра, куртка высотой от 55% и площадью рамки от 28%
+    box = p.getchannel('A').point(lambda v: 255 if v > 40 else 0).getbbox()
+    if not box:
+        return False, 'пусто'
+    w, h = (box[2] - box[0]) / W, (box[3] - box[1]) / H
+    if kind == 'shoes':
+        return w >= 0.50, f'ширина {w:.0%}'
+    return h >= 0.55 and w * h >= 0.28, f'высота {h:.0%}, рамка {w * h:.0%}'
 
 def layout(product, kind, seed, cropped=False, shrink=1.0):
-    # где и в каком размере стоит товар; от фона не зависит. Всё главное внутри центральной зоны
+    # товар крупно, почти на весь кадр
     rnd = random.Random(seed)
-    lo, hi = SAFE * H, (1 - SAFE) * H
-    standing = kind == 'jacket' and not cropped and product.height / product.width > 1.8
-    if standing:
-        scale = 0.72 * H / product.height
+    pw, ph = product.size
+    if kind == 'shoes':
+        scale = min(0.86 * W / pw, 0.70 * H / ph)
     elif cropped:
-        scale = min(0.92 * H / product.height, 0.84 * W / product.width)
-    elif kind == 'shoes':
-        scale = min(0.72 * W / product.width, 0.58 * H / product.height)
+        # модель: по ширине почти во весь кадр, голова у верхнего края, низ уходит за кадр
+        scale = min(1.04 * H / ph, 0.95 * W / pw)
     else:
-        scale = min(0.70 * H / product.height, 0.72 * W / product.width)
-    scale *= shrink * rnd.uniform(0.98, 1.02)
-    p = product.resize((max(1, int(product.width * scale)), max(1, int(product.height * scale))), Image.LANCZOS)
+        scale = min(0.92 * H / ph, 0.90 * W / pw)
+    scale *= shrink * rnd.uniform(0.99, 1.01)
+    p = product.resize((max(1, int(pw * scale)), max(1, int(ph * scale))), Image.LANCZOS)
     x = (W - p.width) // 2
-    if cropped:
-        y = H - p.height
-    elif standing:
-        y = int(hi) - p.height
-    elif kind == 'shoes':
-        y = int(H * 0.80) - p.height
+    if kind == 'shoes':
+        y = int(H * 0.86) - p.height
+    elif cropped:
+        y = int(0.03 * H) if p.height >= 0.97 * H else H - p.height
     else:
-        y = int((lo + hi) / 2 - p.height / 2 + 0.02 * H)
-    return p, x, y, standing
+        y = (H - p.height) // 2
+    return p, x, y, False
 
 def _font(bold, size):
     from PIL import ImageFont
@@ -126,16 +127,16 @@ def _font(bold, size):
 
 def badge_size():
     from PIL import ImageDraw
-    f1, f2 = _font(True, 44), _font(False, 30)
+    f1, f2 = _font(True, 58), _font(False, 38)
     d = ImageDraw.Draw(Image.new('L', (1, 1)))
-    w = max(d.textlength(BADGE[0], font=f1), d.textlength(BADGE[1], font=f2)) + 2 * 24 + 14
-    return int(w), 44 + 30 + 14 + 2 * 20
+    w = max(d.textlength(BADGE[0], font=f1), d.textlength(BADGE[1], font=f2)) + 2 * 30 + 16
+    return int(w), 58 + 38 + 16 + 2 * 24
 
 def badge_spots(p, x, y):
-    # углы центральной зоны и насколько плашка там задевает товар
+    # плашка в верхних углах (внизу карточки Авито ставит свой ярлык «Оплата частями»)
     bw, bh = badge_size()
-    m = int(SAFE * W) + 4
-    spots = [(m, m), (W - m - bw, m), (m, H - m - bh), (W - m - bw, H - m - bh)]
+    m = int(0.035 * W)
+    spots = [(m, m), (W - m - bw, m)]
     a = Image.new('L', (W, H), 0); a.paste(p.getchannel('A'), (x, y))
     res = []
     for sx, sy in spots:
@@ -144,15 +145,22 @@ def badge_spots(p, x, y):
     return res
 
 def place(product, kind, seed, cropped=False, base=1.0):
-    # уменьшаем товар, пока плашке не найдётся угол без перекрытия
-    for shrink in (1.0, 0.94, 0.88, 0.82):
-        p, x, y, st = layout(product, kind, seed, cropped, shrink * base)
+    # плашка не должна закрывать товар и лицо: модель опускаем ниже плашки, остальное чуть уменьшаем
+    _, bh = badge_size()
+    for shrink in (1.0, 0.93, 0.86):
+        p, x, y, st = layout(product, kind, seed, cropped, base * shrink)
         spots = badge_spots(p, x, y)
-        free = [(sx, sy) for c, sx, sy in spots if c <= 0.02]
-        if free:
+        lo = min(c for c, _, _ in spots)
+        if lo <= 0.04:
             break
-    if not free:
-        c, sx, sy = min(spots); free = [(sx, sy)]
+        y2 = int(0.035 * W) + bh + 14
+        if kind == 'jacket' and y < y2 and (cropped or y2 + p.height <= 0.99 * H):
+            y = y2
+            spots = badge_spots(p, x, y)
+            lo = min(c for c, _, _ in spots)
+            if lo <= 0.04:
+                break
+    free = [(sx, sy) for c, sx, sy in spots if c <= lo + 0.03]
     return p, x, y, st, free
 
 def busy(bg, sx, sy):
@@ -164,17 +172,17 @@ def busy(bg, sx, sy):
 
 def draw_badge(canvas, bx, by):
     from PIL import ImageDraw
-    f1, f2 = _font(True, 44), _font(False, 30)
+    f1, f2 = _font(True, 58), _font(False, 38)
     bw, bh = badge_size()
     ov = Image.new('RGBA', canvas.size, (0, 0, 0, 0))
     sh = Image.new('RGBA', canvas.size, (0, 0, 0, 0))
-    ImageDraw.Draw(sh).rounded_rectangle([bx + 3, by + 6, bx + bw + 3, by + bh + 6], radius=20, fill=(0, 0, 0, 70))
+    ImageDraw.Draw(sh).rounded_rectangle([bx + 3, by + 6, bx + bw + 3, by + bh + 6], radius=24, fill=(0, 0, 0, 80))
     sh = sh.filter(ImageFilter.GaussianBlur(8))
     d = ImageDraw.Draw(ov)
-    d.rounded_rectangle([bx, by, bx + bw, by + bh], radius=20, fill=(255, 255, 255, 232))
-    d.rectangle([bx, by + 18, bx + 8, by + bh - 18], fill=(0, 150, 70, 255))
-    d.text((bx + 24 + 14, by + 18), BADGE[0], font=f1, fill=(20, 24, 30, 255))
-    d.text((bx + 24 + 14, by + 18 + 44 + 12), BADGE[1], font=f2, fill=(55, 60, 70, 255))
+    d.rounded_rectangle([bx, by, bx + bw, by + bh], radius=24, fill=(255, 255, 255, 238))
+    d.rectangle([bx, by + 22, bx + 10, by + bh - 22], fill=(0, 150, 70, 255))
+    d.text((bx + 30 + 16, by + 20), BADGE[0], font=f1, fill=(20, 24, 30, 255))
+    d.text((bx + 30 + 16, by + 20 + 58 + 14), BADGE[1], font=f2, fill=(55, 60, 70, 255))
     out = Image.alpha_composite(canvas.convert('RGBA'), sh)
     return Image.alpha_composite(out, ov)
 
