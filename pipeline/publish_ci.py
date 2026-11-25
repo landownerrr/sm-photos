@@ -48,7 +48,9 @@ def main():
         art, kind = r['article'], r['type']
         urls = r['photo_urls'].split()
         print(f'[{i}/{len(mine)}] {art}', flush=True)
-        pick, crop, grays, got = None, None, [], 0
+        # берём ПЕРВОЕ по порядку фото, которое можно вырезать: у Спортмастера первым идёт вид спереди,
+        # дальше бывают вид со спины и детали, их главным ставить нельзя
+        pick, pre, got = None, None, 0
         for n, u in enumerate(urls[:6]):
             d = fetch(u)
             if d is None:
@@ -57,15 +59,10 @@ def main():
             k = mp.photo_kind(d)
             if k == 'pack':
                 pick = (n, d, False); break
-            if k == 'crop' and crop is None:
-                crop = (n, d, True)
-            if k == 'gray' and len(grays) < 2:
-                grays.append((n, d))
-        pick = pick or crop
-        pre = None
-        if not pick:
-            # студийное фото на светлом однотонном фоне: вырезаем, если вокруг нет надписей
-            for n, d in grays:
+            if k == 'crop':
+                pick = (n, d, True); break
+            if k == 'gray':
+                # студийное фото на светлом однотонном фоне: вырезаем, если вокруг нет надписей
                 try:
                     full = mp.cut_out_full(d)
                 except Exception as e:
@@ -90,7 +87,8 @@ def main():
                 product = pre if pre is not None else mp.cut_out(d)
                 product, cropped = mp.focus_product(product, kind, cropped)
                 fun = mp.is_fun(art) and mp.load_backgrounds(kind + '_fun')
-                bgs = mp.load_backgrounds(kind + '_fun') if fun else mp.load_backgrounds(kind)
+                city_bgs = mp.load_backgrounds(kind + '_city') if (not fun and mp.is_city(art)) else []
+                bgs = mp.load_backgrounds(kind + '_fun') if fun else (city_bgs or mp.load_backgrounds(kind))
                 if bgs:
                     bgp = mp.pick_bg(product, bgs, f'{art}-1', kind, cropped, base=mp.FUN_SCALE if fun else 1.0)
                     bg, tag = mp.prepare_bg(bgp), os.path.splitext(os.path.basename(bgp))[0]
@@ -101,10 +99,10 @@ def main():
                 ok, why = mp.big_enough(pp, kind)
                 if not ok:
                     raise RuntimeError(f'товар мелкий ({why}), оставляю оригинал')
-                fn = f'{safe(art)}_{kind[0]}{"f" if fun else ""}{tag}_{mp.VERSION}.jpg'
+                fn = f'{safe(art)}_{kind[0]}{"f" if fun else ("c" if city_bgs else "")}{tag}_{mp.VERSION}.jpg'
                 img.save(os.path.join(WORK, 'img', fn), quality=86, optimize=True)
                 final = [PAGES + 'img/' + fn] + [u for j, u in enumerate(urls) if j != n][:MAX_PHOTOS - 1]
-                status = 'новый фон' + (' (модель по пояс)' if cropped else '') + (', весёлый' if fun else '')
+                status = 'новый фон' + (' (модель по пояс)' if cropped else '') + (', весёлый' if fun else (', город' if city_bgs else ''))
             except Exception as e:
                 print('   ошибка обработки:', e)
         print('  ', status)
