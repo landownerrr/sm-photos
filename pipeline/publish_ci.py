@@ -36,7 +36,7 @@ def main():
     if os.path.exists(prev) and os.environ.get('REDO') != 'true':
         with open(prev, encoding='utf-8') as f:
             for r in csv.DictReader(f):
-                if r['status'] != 'ошибка сети':
+                if r['status'].startswith('новый фон'):
                     done.add(r['article'])
     with open(os.path.join(ROOT, 'items.csv'), encoding='utf-8') as f:
         rows = list(csv.DictReader(f))
@@ -98,8 +98,9 @@ def main():
                     bg, tag = mp.fallback_backgrounds()[0], 'bg'
                 img = mp.compose(product, bg, kind, f'{art}-1', cropped, bool(fun))
                 pp = mp.place(product, kind, f'{art}-1', cropped, mp.FUN_SCALE if fun else 1.0)[0]
-                if mp.product_share(pp) < (0.22 if kind == 'jacket' else 0.15):
-                    raise RuntimeError(f'товар мелкий: {mp.product_share(pp):.0%} кадра')
+                ok, why = mp.big_enough(pp, kind)
+                if not ok:
+                    raise RuntimeError(f'товар мелкий ({why}), оставляю оригинал')
                 fn = f'{safe(art)}_{kind[0]}{"f" if fun else ""}{tag}_{mp.VERSION}.jpg'
                 img.save(os.path.join(WORK, 'img', fn), quality=86, optimize=True)
                 final = [PAGES + 'img/' + fn] + [u for j, u in enumerate(urls) if j != n][:MAX_PHOTOS - 1]
