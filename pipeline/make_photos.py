@@ -7,7 +7,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 OUT = os.path.join(HERE, 'out')
 W, H = 1200, 1200       # квадрат 1:1, как лента Авито в телефоне
 SIZE = H
-VERSION = 'v3'
+VERSION = 'v4'
 SAFE = 0.13             # поля, которые может срезать XL-карточка 4:3: товар и плашка внутри
 BADGE = ('Новый, оригинал', 'Чек и гарантия магазина')
 FUN_PCT = 15            # доля товаров с весёлым фоном (тест кликабельности)
@@ -71,6 +71,23 @@ def match_tone(p, bg, strength=0.10):
     out = rgb.convert('RGBA'); out.putalpha(a)
     return out
 
+def focus_product(product, kind, cropped=False):
+    # модель в полный рост: куртка тогда занимает треть фигуры и выходит мелкой.
+    # Оставляем голову и куртку, ноги срезаем нижним краем кадра, как в портрете по пояс
+    if kind != 'jacket' or product.height / product.width <= 1.7:
+        return product, cropped
+    h = min(product.height, int(max(0.55 * product.height, 1.4 * product.width)))
+    top = product.crop((0, 0, product.width, h))
+    box = top.getchannel('A').point(lambda v: 255 if v > 40 else 0).getbbox()
+    if box:
+        top = top.crop((box[0], box[1], box[2], h))
+    return top, True
+
+def product_share(p):
+    # какую долю кадра занимает товар
+    a = p.getchannel('A').point(lambda v: 1 if v > 40 else 0)
+    return sum(a.getdata()) / (W * H)
+
 def layout(product, kind, seed, cropped=False, shrink=1.0):
     # где и в каком размере стоит товар; от фона не зависит. Всё главное внутри центральной зоны
     rnd = random.Random(seed)
@@ -79,7 +96,7 @@ def layout(product, kind, seed, cropped=False, shrink=1.0):
     if standing:
         scale = 0.72 * H / product.height
     elif cropped:
-        scale = min(0.84 * H / product.height, 0.74 * W / product.width)
+        scale = min(0.92 * H / product.height, 0.84 * W / product.width)
     elif kind == 'shoes':
         scale = min(0.72 * W / product.width, 0.58 * H / product.height)
     else:
