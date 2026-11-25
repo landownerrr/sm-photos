@@ -88,6 +88,7 @@ def main():
             n, d, cropped = pick
             try:
                 product = pre if pre is not None else mp.cut_out(d)
+                product, cropped = mp.focus_product(product, kind, cropped)
                 fun = mp.is_fun(art) and mp.load_backgrounds(kind + '_fun')
                 bgs = mp.load_backgrounds(kind + '_fun') if fun else mp.load_backgrounds(kind)
                 if bgs:
@@ -96,6 +97,9 @@ def main():
                 else:
                     bg, tag = mp.fallback_backgrounds()[0], 'bg'
                 img = mp.compose(product, bg, kind, f'{art}-1', cropped, bool(fun))
+                pp = mp.place(product, kind, f'{art}-1', cropped, mp.FUN_SCALE if fun else 1.0)[0]
+                if mp.product_share(pp) < (0.22 if kind == 'jacket' else 0.15):
+                    raise RuntimeError(f'товар мелкий: {mp.product_share(pp):.0%} кадра')
                 fn = f'{safe(art)}_{kind[0]}{"f" if fun else ""}{tag}_{mp.VERSION}.jpg'
                 img.save(os.path.join(WORK, 'img', fn), quality=86, optimize=True)
                 final = [PAGES + 'img/' + fn] + [u for j, u in enumerate(urls) if j != n][:MAX_PHOTOS - 1]
