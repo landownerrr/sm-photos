@@ -55,9 +55,16 @@ def main():
             # профиль 2: берём указанное фото Спортмастера как есть, только квадрат и синяя полоса
             n = int(r['orig'])
             d = fetch(urls[n]) if n < len(urls) else None
+            if kind == 'shoes':
+                # обувь берём только целиком: если на фото она обрезана краем кадра, смотрим следующие фото
+                for m in range(n, min(len(urls), n + 6)):
+                    dm = d if m == n else fetch(urls[m])
+                    if dm is not None and not mp.shoe_cut_off(dm):
+                        n, d = m, dm
+                        break
             if d is not None:
                 fn = f'{safe(art)}_orig{n}_{mp.VERSION}.jpg'
-                mp.compose_orig_p2(d, r.get('badge')).save(os.path.join(WORK, 'img', fn), quality=88, optimize=True)
+                mp.compose_orig_p2(d, r.get('badge'), kind).save(os.path.join(WORK, 'img', fn), quality=88, optimize=True)
                 final = [PAGES + 'img/' + fn] + [u for j, u in enumerate(urls) if j != n][:MAX_PHOTOS - 1]
                 print('   новый фон P2, оригинал с полосой')
                 out.append([art, 'новый фон P2, оригинал с полосой', ' | '.join(final)])
