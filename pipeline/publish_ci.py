@@ -51,7 +51,29 @@ def main():
         # берём ПЕРВОЕ по порядку фото, которое можно вырезать: у Спортмастера первым идёт вид спереди,
         # дальше бывают вид со спины и детали, их главным ставить нельзя
         pick, pre, got = None, None, 0
-        for n, u in enumerate(urls[:6]):
+        if r.get('style') == 'p2' and r.get('pref') == 'product':
+            # профиль 2: ищем в галерее фото просто товара, без человека
+            for n, u in enumerate(urls[:10]):
+                d = fetch(u)
+                if d is None:
+                    continue
+                got += 1
+                k = mp.photo_kind(d)
+                if k not in ('pack', 'gray'):
+                    continue
+                try:
+                    full = mp.cut_out_full(d)
+                except Exception as e:
+                    print('   ошибка вырезания:', e); continue
+                if k == 'gray' and not mp.clean_cutout(d, full):
+                    continue
+                box = full.getchannel('A').point(lambda v: 255 if v > 20 else 0).getbbox()
+                cut = full.crop(box) if box else full
+                if mp.has_person(cut):
+                    continue
+                pick, pre = (n, d, False), cut
+                break
+        for n, u in enumerate(urls[:6] if pick is None else []):
             d = fetch(u)
             if d is None:
                 continue
@@ -86,6 +108,23 @@ def main():
             try:
                 product = pre if pre is not None else mp.cut_out(d)
                 product, cropped = mp.focus_product(product, kind, cropped)
+                if r.get('style') == 'p2':
+                    # профиль 2: студийные фоны и своя плашка, имя файла с меткой p2
+                    bgs = mp.load_backgrounds(kind + '_p2')
+                    bgp = mp.pick_bg_p2(product, bgs, f'{art}-p2', kind, cropped)
+                    img = mp.compose_p2(product, mp.prepare_bg(bgp), kind, f'{art}-p2', cropped, r.get('badge'))
+                    pp = mp.place_p2(product, kind, f'{art}-p2', cropped)[0]
+                    ok, why = mp.big_enough(pp, kind)
+                    if not ok:
+                        raise RuntimeError(f'товар мелкий ({why}), оставляю оригинал')
+                    tag = os.path.splitext(os.path.basename(bgp))[0]
+                    fn = f'{safe(art)}_{tag}_{mp.VERSION}.jpg'
+                    img.save(os.path.join(WORK, 'img', fn), quality=88, optimize=True)
+                    final = [PAGES + 'img/' + fn] + [u for j, u in enumerate(urls) if j != n][:MAX_PHOTOS - 1]
+                    status = 'новый фон P2, ' + ('с человеком' if mp.has_person(product) else 'товар') + (' (по пояс)' if cropped else '')
+                    print('  ', status)
+                    out.append([art, status, ' | '.join(final)])
+                    continue
                 fun = mp.is_fun(art) and mp.load_backgrounds(kind + '_fun')
                 city_bgs = mp.load_backgrounds(kind + '_city') if (not fun and mp.is_city(art)) else []
                 bgs = mp.load_backgrounds(kind + '_fun') if fun else (city_bgs or mp.load_backgrounds(kind))
