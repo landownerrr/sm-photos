@@ -88,16 +88,29 @@ def main():
                 box = full.getchannel('A').point(lambda v: 255 if v > 20 else 0).getbbox()
                 cut = full.crop(box) if box else full
                 # человек в полный рост или со спины высокий и узкий: такие фото пропускаем
-                if mp.has_person(cut) or cut.height > 1.5 * cut.width:
+                if mp.has_person(cut) or cut.height > 1.5 * cut.width or (kind == 'jacket' and mp.too_close(cut)):
                     continue
                 pick, pre = (n, d, False), cut
                 break
-        for n, u in enumerate(urls[:6] if pick is None else []):
+        skip = int(r['skip']) if (r.get('skip') or '').strip().isdigit() else 0
+        for n, u in enumerate(urls[:6 + skip] if pick is None else []):
+            if n < skip:
+                continue  # первые фото пропускаем по указанию (например, крупный план лица)
             d = fetch(u)
             if d is None:
                 continue
             got += 1
             k = mp.photo_kind(d)
+            if r.get('style') == 'p2' and kind == 'jacket' and k in ('pack', 'crop'):
+                # профиль 2: крупный план лица пропускаем, нужна куртка
+                try:
+                    cut = mp.cut_out(d)
+                except Exception as e:
+                    print('   ошибка вырезания:', e); continue
+                if mp.too_close(cut):
+                    print('   крупный план лица, беру следующее фото'); continue
+                pick, pre = (n, d, k == 'crop'), cut
+                break
             if k == 'pack':
                 pick = (n, d, False); break
             if k == 'crop':
@@ -110,7 +123,10 @@ def main():
                     print('   ошибка вырезания:', e); continue
                 if mp.clean_cutout(d, full):
                     box = full.getchannel('A').point(lambda v: 255 if v > 20 else 0).getbbox()
-                    pick, pre = (n, d, mp.touches_bottom(full)), (full.crop(box) if box else full)
+                    cut = full.crop(box) if box else full
+                    if r.get('style') == 'p2' and kind == 'jacket' and mp.too_close(cut):
+                        print('   крупный план лица, беру следующее фото'); continue
+                    pick, pre = (n, d, mp.touches_bottom(full)), cut
                     break
         final, status = urls[:MAX_PHOTOS], 'оригинал'
         if got == 0:
