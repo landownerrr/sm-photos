@@ -379,3 +379,110 @@ def main():
 
 if __name__ == '__main__':
     main()
+
+
+# ---------- Профиль 2 (высокий чек): свои фоны и синяя полоса во всю ширину ----------
+# Фоны лежат в backgrounds/jacket_p2 (студийная бумага). Текст полосы берётся из колонки badge в items.csv.
+BAND_COLOR = (29, 75, 166)
+BAND_H = 0.125          # высота полосы от высоты кадра
+BAND_LIFT = 0.05        # отступ полосы от нижнего края
+BAND_TEXT = 'ОРИГИНАЛ, НОВАЯ'
+
+def _band_font(size):
+    from PIL import ImageFont
+    here = os.path.dirname(os.path.abspath(__file__))
+    for d in (os.path.join(here, 'fonts'), here):
+        f = os.path.join(d, 'Montserrat-ExtraBold.ttf')
+        if os.path.exists(f):
+            return ImageFont.truetype(f, size)
+    return _font(True, size)
+
+def band_box():
+    bh = int(BAND_H * H)
+    y1 = H - int(BAND_LIFT * H)
+    return y1 - bh, y1
+
+def draw_band(canvas, text):
+    y0, y1 = band_box()
+    bh = y1 - y0
+    ov = Image.new('RGBA', canvas.size, (0, 0, 0, 0))
+    sh = Image.new('RGBA', canvas.size, (0, 0, 0, 0))
+    if BAND_LIFT > 0:
+        ImageDraw.Draw(sh).rectangle([0, y0 + 6, W, y1 + 10], fill=(0, 0, 0, 90))
+        sh = sh.filter(ImageFilter.GaussianBlur(10))
+    d = ImageDraw.Draw(ov)
+    d.rectangle([0, y0, W, y1], fill=BAND_COLOR + (255,))
+    size = int(bh * 0.62)
+    while size > 20:
+        f = _band_font(size)
+        l, t, r, b = d.textbbox((0, 0), text, font=f)
+        if r - l <= W * 0.90:
+            break
+        size -= 2
+    tx = (W - (r - l)) // 2 - l
+    ty = y0 + (bh - (b - t)) // 2 - t
+    d.text((tx, ty), text, font=f, fill=(255, 255, 255, 255))
+    out = Image.alpha_composite(canvas.convert('RGBA'), sh)
+    return Image.alpha_composite(out, ov)
+
+def place_p2(product, kind, seed, cropped=False):
+    y0, _ = band_box()
+    if kind == 'shoes':
+        # обувь стоит на полу прямо над синей полосой
+        pw, ph = product.size
+        scale = min(0.80 * W / pw, 0.50 * H / ph)
+        p = product.resize((max(1, int(pw * scale)), max(1, int(ph * scale))), Image.LANCZOS)
+        return p, (W - p.width) // 2, y0 - int(0.035 * H) - p.height, True
+    # куртка крупно, как в профиле 1; без модели поднимаем, чтобы полоса закрывала поменьше
+    p, x, y, st = layout(product, kind, seed, cropped, 1.0)
+    if not cropped:
+        y = max(int(0.02 * H), min(y, y0 + int(0.06 * H) - p.height))
+    return p, x, y, st
+
+def has_person(cut):
+    # есть ли на вырезке человек: ищем кожу (лицо) в верхней части силуэта
+    import numpy as np
+    im = cut.convert('RGBA')
+    im.thumbnail((240, 240))
+    a = np.asarray(im).astype(float)
+    alpha = a[..., 3] > 128
+    if alpha.sum() < 500:
+        return False
+    r, g, b = a[..., 0], a[..., 1], a[..., 2]
+    y = 0.299 * r + 0.587 * g + 0.114 * b
+    cr = 128 + 0.5 * r - 0.4187 * g - 0.0813 * b
+    cb = 128 - 0.1687 * r - 0.3313 * g + 0.5 * b
+    skin = alpha & (cr > 135) & (cr < 175) & (cb > 80) & (cb < 130) & (y > 60)
+    rows = np.where(alpha.any(1))[0]
+    top = rows[0] + int(0.3 * (rows[-1] - rows[0] + 1))
+    st = skin[:top].sum() / max(1, alpha[:top].sum())
+    sr = skin[top:].sum() / max(1, alpha[top:].sum())
+    return st >= 0.06 and st >= 2 * sr + 0.02
+
+def pick_bg_p2(product, bgs, seed, kind='jacket', cropped=False, min_diff=60):
+    p, x, y, _ = place_p2(product, kind, seed, cropped)
+    scored = sorted(((contrast_on(bg_gray(b), p, x, y), b) for b in bgs), reverse=True)
+    good = sorted(b for d, b in scored if d >= min_diff)
+    if not good:
+        good = [b for d, b in scored[:max(1, len(scored) // 3)]]
+    return random.Random(seed).choice(good)
+
+def compose_p2(product, bg, kind, seed, cropped=False, text=None):
+    canvas = bg.copy()
+    p, x, y, standing = place_p2(product, kind, seed, cropped)
+    p = match_tone(p, bg, 0.06)
+    shadow = Image.new('RGBA', canvas.size, (0, 0, 0, 0))
+    if kind == 'shoes':
+        d = ImageDraw.Draw(shadow)
+        d.ellipse([x + p.width * 0.04, y + p.height - 22, x + p.width * 0.96, y + p.height + 18], fill=(0, 0, 0, 130))
+        shadow = shadow.filter(ImageFilter.GaussianBlur(14))
+    else:
+        alpha = p.getchannel('A')
+        sh = Image.new('RGBA', p.size, (0, 0, 0, 90))
+        sh.putalpha(alpha.point(lambda a: int(a * 0.35)))
+        shadow.paste(sh, (x + 10, y + 16), sh)
+        shadow = shadow.filter(ImageFilter.GaussianBlur(18))
+    canvas = Image.alpha_composite(canvas.convert('RGBA'), shadow)
+    canvas.paste(p, (x, y), p)
+    canvas = draw_band(canvas, (text or BAND_TEXT).upper())
+    return canvas.convert('RGB')
