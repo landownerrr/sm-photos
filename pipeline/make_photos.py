@@ -486,3 +486,16 @@ def compose_p2(product, bg, kind, seed, cropped=False, text=None):
     canvas.paste(p, (x, y), p)
     canvas = draw_band(canvas, (text or BAND_TEXT).upper())
     return canvas.convert('RGB')
+
+def compose_orig_p2(data, text=None):
+    # фото Спортмастера без вырезания: квадрат с упором на верх кадра (лицо и куртка) и синяя полоса
+    im = ImageOps.exif_transpose(Image.open(io.BytesIO(data))).convert('RGB')
+    if im.width > 1.05 * im.height:
+        # широкое фото (обувь): целиком, поверх цвета угла, выше полосы
+        sq = Image.new('RGB', (W, H), im.getpixel((2, 2)))
+        y0, _ = band_box()
+        t = im.copy(); t.thumbnail((W, y0 - int(0.04 * H)), Image.LANCZOS)
+        sq.paste(t, ((W - t.width) // 2, max(0, y0 - int(0.03 * H) - t.height)))
+    else:
+        sq = ImageOps.fit(im, (W, H), Image.LANCZOS, centering=(0.5, 0.25))
+    return draw_band(sq, (text or BAND_TEXT).upper()).convert('RGB')
