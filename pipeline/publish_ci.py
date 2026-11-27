@@ -51,7 +51,33 @@ def main():
         # берём ПЕРВОЕ по порядку фото, которое можно вырезать: у Спортмастера первым идёт вид спереди,
         # дальше бывают вид со спины и детали, их главным ставить нельзя
         pick, pre, got = None, None, 0
-        if r.get('style') == 'p2' and (r.get('orig') or '').strip().isdigit():
+        if r.get('style') == 'p2' and (r.get('gallery') or '').strip() == '1':
+            # профиль 2: сводка всех фото галереи с номерами, чтобы выбрать главное вручную
+            from PIL import Image, ImageDraw
+            ims = []
+            for n, u in enumerate(urls[:10]):
+                d = fetch(u)
+                if d is not None:
+                    im = Image.open(__import__('io').BytesIO(d)).convert('RGB'); im.thumbnail((400, 400)); ims.append((n, im))
+            sh = Image.new('RGB', (5 * 400, 2 * 430), 'white'); dr = ImageDraw.Draw(sh)
+            for j, (n, im) in enumerate(ims):
+                x, y = (j % 5) * 400, (j // 5) * 430
+                sh.paste(im, (x + (400 - im.width) // 2, y + 30)); dr.text((x + 8, y + 6), f'#{n}', fill=(200, 0, 0))
+            fn = f'{safe(art)}_gallery.jpg'
+            sh.save(os.path.join(WORK, 'img', fn), quality=85)
+            print('   галерея', len(ims))
+            out.append([art, 'новый фон галерея', PAGES + 'img/' + fn])
+            continue
+        if r.get('style') == 'p2' and (r.get('pick') or '').strip().isdigit():
+            # профиль 2: главное фото задано вручную по номеру в галерее
+            n = int(r['pick'])
+            d = fetch(urls[n]) if n < len(urls) else None
+            if d is not None:
+                got += 1
+                full = mp.cut_out_full(d)
+                box = full.getchannel('A').point(lambda v: 255 if v > 20 else 0).getbbox()
+                pick, pre = (n, d, mp.touches_bottom(full)), (full.crop(box) if box else full)
+        if pick is None and r.get('style') == 'p2' and (r.get('orig') or '').strip().isdigit():
             # профиль 2: берём указанное фото Спортмастера как есть, только квадрат и синяя полоса
             n = int(r['orig'])
             d = fetch(urls[n]) if n < len(urls) else None
@@ -69,7 +95,7 @@ def main():
                 print('   новый фон P2, оригинал с полосой')
                 out.append([art, 'новый фон P2, оригинал с полосой', ' | '.join(final)])
                 continue
-        if r.get('style') == 'p2' and r.get('pref') == 'product':
+        if pick is None and r.get('style') == 'p2' and r.get('pref') == 'product':
             # профиль 2: ищем в галерее фото просто товара, без человека
             for n, u in enumerate(urls[:10]):
                 d = fetch(u)
