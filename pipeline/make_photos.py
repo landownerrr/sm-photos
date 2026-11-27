@@ -433,11 +433,16 @@ def place_p2(product, kind, seed, cropped=False):
         scale = min(0.80 * W / pw, 0.50 * H / ph)
         p = product.resize((max(1, int(pw * scale)), max(1, int(ph * scale))), Image.LANCZOS)
         return p, (W - p.width) // 2, y0 - int(0.035 * H) - p.height, True
-    # куртка крупно, как в профиле 1; без модели поднимаем, чтобы полоса закрывала поменьше
-    p, x, y, st = layout(product, kind, seed, cropped, 1.0)
-    if not cropped:
-        y = max(int(0.02 * H), min(y, y0 + int(0.06 * H) - p.height))
-    return p, x, y, st
+    # куртка целиком по высоте кадра: без увеличения до лица, чтобы было видно сам товар
+    pw, ph = product.size
+    scale = min(0.97 * H / ph, 0.96 * W / pw)
+    p = product.resize((max(1, int(pw * scale)), max(1, int(ph * scale))), Image.LANCZOS)
+    x = (W - p.width) // 2
+    if cropped:
+        y = H - p.height                      # обрезанный низ уходит за край кадра
+    else:
+        y = max(int(0.02 * H), min((H - p.height) // 2, y0 + int(0.06 * H) - p.height))
+    return p, x, y, False
 
 def has_person(cut):
     # есть ли на вырезке человек: ищем кожу (лицо) в верхней части силуэта
