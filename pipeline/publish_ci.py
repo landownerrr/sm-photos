@@ -51,6 +51,17 @@ def main():
         # берём ПЕРВОЕ по порядку фото, которое можно вырезать: у Спортмастера первым идёт вид спереди,
         # дальше бывают вид со спины и детали, их главным ставить нельзя
         pick, pre, got = None, None, 0
+        if r.get('style') == 'p2' and (r.get('orig') or '').strip().isdigit():
+            # профиль 2: берём указанное фото Спортмастера как есть, только квадрат и синяя полоса
+            n = int(r['orig'])
+            d = fetch(urls[n]) if n < len(urls) else None
+            if d is not None:
+                fn = f'{safe(art)}_orig{n}_{mp.VERSION}.jpg'
+                mp.compose_orig_p2(d, r.get('badge')).save(os.path.join(WORK, 'img', fn), quality=88, optimize=True)
+                final = [PAGES + 'img/' + fn] + [u for j, u in enumerate(urls) if j != n][:MAX_PHOTOS - 1]
+                print('   новый фон P2, оригинал с полосой')
+                out.append([art, 'новый фон P2, оригинал с полосой', ' | '.join(final)])
+                continue
         if r.get('style') == 'p2' and r.get('pref') == 'product':
             # профиль 2: ищем в галерее фото просто товара, без человека
             for n, u in enumerate(urls[:10]):
