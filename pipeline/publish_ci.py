@@ -69,7 +69,8 @@ def main():
                     continue
                 box = full.getchannel('A').point(lambda v: 255 if v > 20 else 0).getbbox()
                 cut = full.crop(box) if box else full
-                if mp.has_person(cut):
+                # человек в полный рост или со спины высокий и узкий: такие фото пропускаем
+                if mp.has_person(cut) or cut.height > 1.5 * cut.width:
                     continue
                 pick, pre = (n, d, False), cut
                 break
