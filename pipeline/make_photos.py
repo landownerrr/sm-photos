@@ -547,4 +547,4 @@ def face_share(cut):
 
 def too_close(cut):
     # крупный план лица: куртки почти не видно, такое фото главным не ставим
-    return face_share(cut) > 0.28
+    return face_share(cut) > 0.5  # при раскладке во всю высоту крупные лица уже не проблема
