@@ -519,3 +519,27 @@ def shoe_cut_off(data):
     corner = np.median(np.concatenate([a[:6, :6].reshape(-1, 3), a[:6, -6:].reshape(-1, 3)]), axis=0)
     diff = np.abs(a - corner).max(axis=2) > 28
     return diff[:, :3].mean() > 0.02 or diff[:, -3:].mean() > 0.02
+
+def face_share(cut):
+    # какую долю высоты силуэта занимает лицо: ищем строки с кожей в центральной полосе верхних 70%
+    import numpy as np
+    im = cut.convert('RGBA'); im.thumbnail((300, 300))
+    a = np.asarray(im).astype(float)
+    alpha = a[..., 3] > 128
+    rows = np.where(alpha.any(1))[0]
+    if len(rows) < 20:
+        return 0.0
+    r, g, b = a[..., 0], a[..., 1], a[..., 2]
+    y = 0.299 * r + 0.587 * g + 0.114 * b
+    cr = 128 + 0.5 * r - 0.4187 * g - 0.0813 * b
+    cb = 128 - 0.1687 * r - 0.3313 * g + 0.5 * b
+    skin = alpha & (cr > 135) & (cr < 175) & (cb > 80) & (cb < 130) & (y > 60)
+    h = rows[-1] - rows[0] + 1
+    w = a.shape[1]
+    band = skin[rows[0]:rows[0] + int(0.7 * h), int(0.25 * w):int(0.75 * w)]
+    face_rows = (band.mean(1) > 0.15).sum()
+    return face_rows / h
+
+def too_close(cut):
+    # крупный план лица: куртки почти не видно, такое фото главным не ставим
+    return face_share(cut) > 0.28
