@@ -487,15 +487,35 @@ def compose_p2(product, bg, kind, seed, cropped=False, text=None):
     canvas = draw_band(canvas, (text or BAND_TEXT).upper())
     return canvas.convert('RGB')
 
-def compose_orig_p2(data, text=None):
-    # фото Спортмастера без вырезания: квадрат с упором на верх кадра (лицо и куртка) и синяя полоса
+def compose_orig_p2(data, text=None, kind='jacket'):
+    # фото Спортмастера без вырезания фона, квадрат 1200 и синяя полоса
     im = ImageOps.exif_transpose(Image.open(io.BytesIO(data))).convert('RGB')
-    if im.width > 1.05 * im.height:
-        # широкое фото (обувь): целиком, поверх цвета угла, выше полосы
-        sq = Image.new('RGB', (W, H), im.getpixel((2, 2)))
-        y0, _ = band_box()
-        t = im.copy(); t.thumbnail((W, y0 - int(0.04 * H)), Image.LANCZOS)
-        sq.paste(t, ((W - t.width) // 2, max(0, y0 - int(0.03 * H) - t.height)))
+    y0, _ = band_box()
+    if kind == 'shoes' or im.width > 1.05 * im.height:
+        # обувь: находим её по отличию от цвета фона, обрезаем по краям и ставим целиком выше полосы
+        import numpy as np
+        a = np.asarray(im).astype(int)
+        corner = np.median(np.concatenate([a[:8, :8].reshape(-1, 3), a[:8, -8:].reshape(-1, 3)]), axis=0)
+        diff = np.abs(a - corner).max(axis=2) > 28
+        ys, xs = np.where(diff)
+        if len(xs) > 200:
+            pad = int(0.02 * max(im.size))
+            box = (max(0, xs.min() - pad), max(0, ys.min() - pad), min(im.width, xs.max() + pad), min(im.height, ys.max() + pad))
+            im = im.crop(box)
+        sq = Image.new('RGB', (W, H), tuple(int(v) for v in corner))
+        t = im.copy()
+        t.thumbnail((int(0.86 * W), y0 - int(0.10 * H)), Image.LANCZOS)
+        top = y0 - int(0.035 * H) - t.height
+        sq.paste(t, ((W - t.width) // 2, top))
     else:
         sq = ImageOps.fit(im, (W, H), Image.LANCZOS, centering=(0.5, 0.25))
     return draw_band(sq, (text or BAND_TEXT).upper()).convert('RGB')
+
+def shoe_cut_off(data):
+    # обувь упирается в левый или правый край фото: значит она обрезана кадром, такое фото не берём
+    import numpy as np
+    im = Image.open(io.BytesIO(data)).convert('RGB'); im.thumbnail((400, 400))
+    a = np.asarray(im).astype(int)
+    corner = np.median(np.concatenate([a[:6, :6].reshape(-1, 3), a[:6, -6:].reshape(-1, 3)]), axis=0)
+    diff = np.abs(a - corner).max(axis=2) > 28
+    return diff[:, :3].mean() > 0.02 or diff[:, -3:].mean() > 0.02
