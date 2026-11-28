@@ -98,7 +98,12 @@ def main():
         mp.SHOE_PAIR = (r.get('pref') == 'pair')
         if pick is None and r.get('style') == 'p2' and r.get('pref') in ('product', 'pair'):
             # профиль 2: ищем в галерее фото просто товара, без человека
-            for n, u in enumerate(urls[:10]):
+            # обувь: сначала второе фото (обычно ракурс под углом), потом остальные по порядку
+            order = list(range(min(10, len(urls))))
+            if kind == 'shoes' and len(order) > 1:
+                order = [1, 0] + order[2:]
+            for n in order:
+                u = urls[n]
                 d = fetch(u)
                 if d is None:
                     continue
@@ -117,6 +122,8 @@ def main():
                 # человек в полный рост или со спины высокий и узкий: такие фото пропускаем
                 if mp.has_person(cut) or cut.height > 1.5 * cut.width or (kind == 'jacket' and mp.too_close(cut)):
                     continue
+                if kind == 'shoes' and n == 1 and not (1.05 <= cut.width / max(1, cut.height) <= 1.85):
+                    continue  # второе фото не ракурс под углом (вид сверху, подошва и т.п.)
                 pick, pre = (n, d, False), cut
                 break
         skip = int(r['skip']) if (r.get('skip') or '').strip().isdigit() else 0
