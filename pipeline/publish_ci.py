@@ -95,7 +95,8 @@ def main():
                 print('   новый фон P2, оригинал с полосой')
                 out.append([art, 'новый фон P2, оригинал с полосой', ' | '.join(final)])
                 continue
-        if pick is None and r.get('style') == 'p2' and r.get('pref') == 'product':
+        mp.SHOE_PAIR = (r.get('pref') == 'pair')
+        if pick is None and r.get('style') == 'p2' and r.get('pref') in ('product', 'pair'):
             # профиль 2: ищем в галерее фото просто товара, без человека
             for n, u in enumerate(urls[:10]):
                 d = fetch(u)
