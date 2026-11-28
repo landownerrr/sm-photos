@@ -425,14 +425,34 @@ def draw_band(canvas, text):
     out = Image.alpha_composite(canvas.convert('RGBA'), sh)
     return Image.alpha_composite(out, ov)
 
+SHOE_PAIR = False
+
+def make_pair(product):
+    # пара из одного фото: второй ботинок чуть меньше, темнее и сдвинут назад-вверх, как стоящий за первым
+    from PIL import ImageEnhance
+    p = product.convert('RGBA')
+    pw, ph = p.size
+    back = p.resize((int(pw * 0.94), int(ph * 0.94)), Image.LANCZOS)
+    rgb = ImageEnhance.Brightness(back.convert('RGB')).enhance(0.82)
+    rgb.putalpha(back.getchannel('A'))
+    back = rgb
+    dx, dy = int(0.30 * pw), int(0.07 * ph)
+    cw, ch = max(pw, dx + back.width), max(ph, back.height) + dy
+    can = Image.new('RGBA', (cw, ch), (0, 0, 0, 0))
+    can.alpha_composite(back, (dx, 0))
+    can.alpha_composite(p, (0, ch - ph))
+    return can
+
 def place_p2(product, kind, seed, cropped=False):
     y0, _ = band_box()
     if kind == 'shoes':
-        # обувь стоит на полу прямо над синей полосой
+        # обувь стоит на полу прямо над синей полосой, крупно; при SHOE_PAIR рисуем пару
+        if SHOE_PAIR:
+            product = make_pair(product)
         pw, ph = product.size
-        scale = min(0.80 * W / pw, 0.50 * H / ph)
+        scale = min(0.94 * W / pw, 0.66 * H / ph)
         p = product.resize((max(1, int(pw * scale)), max(1, int(ph * scale))), Image.LANCZOS)
-        return p, (W - p.width) // 2, y0 - int(0.035 * H) - p.height, True
+        return p, (W - p.width) // 2, y0 - int(0.03 * H) - p.height, True
     # куртка целиком по высоте кадра: без увеличения до лица, чтобы было видно сам товар
     pw, ph = product.size
     scale = min(0.97 * H / ph, 0.96 * W / pw)
